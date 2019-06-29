@@ -1,4 +1,4 @@
-package parallel
+package parallel_test
 
 import (
 	"errors"
@@ -8,7 +8,28 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	parallel "github.com/slonegd-otus-go/08_parallel"
 )
+
+var log string
+var wg sync.WaitGroup
+
+func makeFoo(id int, duration time.Duration, isError bool) func() error {
+	return func() error {
+		wg.Add(1)
+		defer func() {
+			wg.Done()
+		}()
+		time.Sleep(duration)
+		if isError {
+			log = fmt.Sprintf("%verror %v\n", log, id)
+			return errors.New("")
+		}
+		log = fmt.Sprintf("%vexecute %v\n", log, id)
+		return nil
+	}
+}
 
 func TestExecute(t *testing.T) {
 	type args struct {
@@ -145,29 +166,10 @@ error 3
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			Execute(tt.tasks, tt.workersCnt, tt.maxErrorCnt)
+			parallel.Execute(tt.tasks, tt.workersCnt, tt.maxErrorCnt)
 			assert.Equal(t, tt.wantLog, log)
 			wg.Wait()
 			log = ""
 		})
-	}
-}
-
-var log string
-var wg sync.WaitGroup
-
-func makeFoo(id int, duration time.Duration, isError bool) func() error {
-	return func() error {
-		wg.Add(1)
-		defer func() {
-			wg.Done()
-		}()
-		time.Sleep(duration)
-		if isError {
-			log = fmt.Sprintf("%verror %v\n", log, id)
-			return errors.New("")
-		}
-		log = fmt.Sprintf("%vexecute %v\n", log, id)
-		return nil
 	}
 }
