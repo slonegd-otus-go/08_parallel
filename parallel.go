@@ -1,32 +1,36 @@
 package parallel
 
+import "sync"
+
 func Execute(tasks []func() error, workersCnt, maxErrorCnt int) {
 	taskC := make(chan func() error)
 	errC := make(chan struct{})
 	closeC := make(chan struct{})
-	defer func() {
-		close(closeC)
-	}()
+	var waitgroup sync.WaitGroup
 
 	// start workers
 	for i := 0; i < workersCnt; i++ {
-		go worker(taskC, errC, closeC)
+		go worker(taskC, errC, closeC, &waitgroup)
 	}
 
 	errorCnt := 0
+out:
 	for _, task := range tasks {
 		select {
 		case <-errC:
 			errorCnt++
 			if errorCnt == maxErrorCnt {
-				return
+				break out
 			}
 		case taskC <- task:
 		}
 	}
+	close(closeC)
+	waitgroup.Wait()
 }
 
-func worker(task <-chan func() error, errC chan struct{}, close <-chan struct{}) {
+func worker(task <-chan func() error, errC chan struct{}, close <-chan struct{}, waitgroup *sync.WaitGroup) {
+	waitgroup.Add(1)
 	for {
 		select {
 		case task := <-task:
@@ -35,9 +39,11 @@ func worker(task <-chan func() error, errC chan struct{}, close <-chan struct{})
 				errC <- struct{}{}
 			}
 		case <-close:
+			waitgroup.Done()
 			return
 		}
 	}
+
 }
 
 func closed(ch <-chan struct{}) bool {
