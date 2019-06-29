@@ -9,37 +9,61 @@ func Execute(tasks []func() error, workersCnt, maxErrorCnt int) {
 	var waitgroup sync.WaitGroup
 
 	// start workers
+	waitgroup.Add(1)
 	for i := 0; i < workersCnt; i++ {
 		go worker(taskC, errC, closeC, &waitgroup)
 	}
 
-	errorCnt := 0
-out:
-	for _, task := range tasks {
-		select {
-		case <-errC:
-			errorCnt++
-			if errorCnt == maxErrorCnt {
-				break out
+	go func() {
+		errorCnt := 0
+		for {
+			select {
+			case <-errC:
+				errorCnt++
+				if errorCnt == maxErrorCnt {
+					close(closeC)
+					return
+				}
+			case <-closeC:
+				return
 			}
-		case taskC <- task:
+		}
+	}()
+
+	go func() {
+		waitgroup.Wait()
+		if closed(closeC) {
+			return
+		}
+		close(closeC)
+	}()
+
+out:
+	for i := 0; i < len(tasks); {
+		select {
+		case taskC <- tasks[i]:
+			waitgroup.Add(1)
+			i++
+		case <-closeC:
+			break out
 		}
 	}
-	close(closeC)
-	waitgroup.Wait()
+
+	waitgroup.Done()
+	<-closeC
+
 }
 
 func worker(task <-chan func() error, errC chan struct{}, close <-chan struct{}, waitgroup *sync.WaitGroup) {
-	waitgroup.Add(1)
 	for {
 		select {
 		case task := <-task:
 			err := task()
+			waitgroup.Done()
 			if err != nil && !closed(close) {
 				errC <- struct{}{}
 			}
 		case <-close:
-			waitgroup.Done()
 			return
 		}
 	}
