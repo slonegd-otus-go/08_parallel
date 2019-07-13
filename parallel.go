@@ -39,11 +39,10 @@ func Execute(tasks []func() error, workersCnt, maxErrorCnt int) {
 	}()
 
 out:
-	for i := 0; i < len(tasks); {
+	for _, task := range tasks {
 		select {
-		case taskC <- tasks[i]:
+		case taskC <- task:
 			waitgroup.Add(1)
-			i++
 		case <-closeC:
 			break out
 		}
