@@ -4,38 +4,32 @@ import "sync"
 
 func Execute(tasks []func() error, workersCnt, maxErrorCnt int) {
 	taskC := make(chan func() error)
-	errC := make(chan struct{})
-	closeC := make(chan struct{})
-	var waitgroup sync.WaitGroup
+	errOut := make(chan struct{})
+	finishWorkers := make(chan struct{})
 
 	// start workers
-	waitgroup.Add(1)
+	var waitgroup sync.WaitGroup
 	for i := 0; i < workersCnt; i++ {
-		go worker(taskC, errC, closeC, &waitgroup)
+		go worker(taskC, errOut, finishWorkers, &waitgroup)
 	}
 
+	// count errors
+	finishErrorCount := make(chan struct{})
+	doneError := make(chan struct{})
 	go func() {
 		errorCnt := 0
 		for {
 			select {
-			case <-errC:
+			case <-errOut:
 				errorCnt++
 				if errorCnt == maxErrorCnt {
-					close(closeC)
+					close(doneError)
 					return
 				}
-			case <-closeC:
+			case <-finishErrorCount:
 				return
 			}
 		}
-	}()
-
-	go func() {
-		waitgroup.Wait()
-		if closed(closeC) {
-			return
-		}
-		close(closeC)
 	}()
 
 out:
@@ -43,37 +37,44 @@ out:
 		select {
 		case taskC <- task:
 			waitgroup.Add(1)
-		case <-closeC:
+		case <-doneError:
 			break out
 		}
 	}
 
-	waitgroup.Done()
-	<-closeC
+	// wait workers
+	doneWorkers := make(chan struct{})
+	go func() {
+		waitgroup.Wait()
+		doneWorkers <- struct{}{}
+	}()
 
-}
-
-func worker(task <-chan func() error, errC chan struct{}, close <-chan struct{}, waitgroup *sync.WaitGroup) {
 	for {
 		select {
-		case task := <-task:
-			err := task()
-			waitgroup.Done()
-			if err != nil && !closed(close) {
-				errC <- struct{}{}
-			}
-		case <-close:
+		case <-doneError:
+			close(finishWorkers)
+			return
+		case <-doneWorkers:
+			close(finishErrorCount)
+			close(finishWorkers)
 			return
 		}
 	}
 
 }
 
-func closed(ch <-chan struct{}) bool {
-	select {
-	case <-ch:
-		return true
-	default:
-		return false
+func worker(task <-chan func() error, errC chan struct{}, finish <-chan struct{}, waitgroup *sync.WaitGroup) {
+	for {
+		select {
+		case task := <-task:
+			err := task()
+			waitgroup.Done()
+			if err != nil {
+				errC <- struct{}{}
+			}
+		case <-finish:
+			return
+		}
 	}
+
 }
