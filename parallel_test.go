@@ -13,15 +13,13 @@ import (
 )
 
 var log string
-var wg sync.WaitGroup
+var logmtx sync.Mutex
 
 func makeFoo(id int, duration time.Duration, isError bool) func() error {
 	return func() error {
-		wg.Add(1)
-		defer func() {
-			wg.Done()
-		}()
 		time.Sleep(duration)
+		logmtx.Lock()
+		defer logmtx.Unlock()
 		if isError {
 			log = fmt.Sprintf("%verror %v\n", log, id)
 			return errors.New("")
@@ -166,10 +164,14 @@ error 3
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parallel.Execute(tt.tasks, tt.workersCnt, tt.maxErrorCnt)
-			assert.Equal(t, tt.wantLog, log)
-			wg.Wait()
+			logmtx.Lock()
 			log = ""
+			logmtx.Unlock()
+			parallel.Execute(tt.tasks, tt.workersCnt, tt.maxErrorCnt)
+			logmtx.Lock()
+			assert.Equal(t, tt.wantLog, log)
+			logmtx.Unlock()
+			time.Sleep(100 * time.Millisecond)
 		})
 	}
 }
